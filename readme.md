@@ -1,6 +1,6 @@
-# SimVLA: Simple Vision-Language-Action Model
+# SimVLA: A Simple VLA Baseline for Robotic Manipulation
 
-A simple and efficient Vision-Language-Action (VLA) model based on SmolVLM-500M-Instruct for robot manipulation tasks.
+A simple and efficient Vision-Language-Action (VLA) model for robot manipulation tasks.
 
 ## Features
 
