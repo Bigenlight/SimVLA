@@ -1,5 +1,9 @@
 # SimVLA: A Simple VLA Baseline for Robotic Manipulation
 
+| **Paper** | **Website** | **Model & Data** |
+| :------------------: | :-----------------------: | :---------------------: |
+| [![Paper](https://img.shields.io/badge/Paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2602.18224) | [![Website](https://img.shields.io/badge/Project%20Page-181717?style=for-the-badge&logo=githubpages&logoColor=white)](https://frontierrobo.github.io/SimVLA/) | [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-FFBA00?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co) |
+
 A simple and efficient Vision-Language-Action (VLA) model for robot manipulation tasks.
 
 ## Installation
@@ -59,6 +63,20 @@ bash train_smolvlm_large.sh
 - **Action Space**: 7-dim (delta xyz + delta euler + gripper)
 - **State Space**: 8-dim (ee_pos + axis_angle + gripper_states)
 
-## License
+## Reference
 
-Apache 2.0
+If you find our codes useful, please consider citing our work
+
+```
+@misc{luo2026simvlasimplevlabaseline,
+      title={SimVLA: A Simple VLA Baseline for Robotic Manipulation}, 
+      author={Yuankai Luo and Woping Chen and Tong Liang and Baiqiao Wang and Zhenguo Li},
+      year={2026},
+      eprint={2602.18224},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2602.18224}, 
+}
+```
+
+
