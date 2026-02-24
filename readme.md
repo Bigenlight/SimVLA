@@ -22,7 +22,7 @@ pip install tensorflow tensorflow-datasets
 
 ### 1. Prepare LIBERO Dataset
 
-Download LIBERO dataset and place it in `./datasets/metas/`.
+Download [LIBERO dataset](https://github.com/Lifelong-Robot-Learning/LIBERO), and place it in `./datasets/metas/`.
 
 ### 2. Create Training Metadata
 
