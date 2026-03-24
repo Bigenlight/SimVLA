@@ -133,7 +133,9 @@ def get_args_parser():
     # Action horizon
     parser.add_argument("--num_actions", type=int, default=10,
                         help="Action horizon (number of future actions to predict)")
-    
+    # --- 여기서부터 아래 두 줄 추가 --- theo
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1,
+                        help="Number of steps to accumulate gradients before updating optimizer")
     # WandB
     parser.add_argument("--wandb_project", type=str, default=None)
     parser.add_argument("--wandb_api_key", type=str, default=None)
@@ -253,12 +255,13 @@ def main(args):
         log_with.append("wandb")
         os.environ["WANDB_API_KEY"] = wandb_api_key
 
-    # Accelerator setup
+# Accelerator setup
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         log_with=log_with,
         project_dir=output_dir,
-        kwargs_handlers=[ddp_kwargs]
+        kwargs_handlers=[ddp_kwargs],
+        gradient_accumulation_steps=args.gradient_accumulation_steps # 이 줄을 추가합니다! Theo
     )
 
     # Initialize trackers
@@ -390,56 +393,59 @@ def main(args):
     logger.info(f"   world_size={accelerator.num_processes}")
 
     for batch in train_dataloader:
-        # Encode language
-        lang = processor.encode_language(batch["language_instruction"])
-        batch.pop("language_instruction", None)
-        inputs = {**batch, **lang}
-        inputs = {k: v.cuda(non_blocking=True) for k, v in inputs.items()}
-        
-        # Update LR
-        update_group_lrs(optim, global_step, args)
+        with accelerator.accumulate(model):
+            # Encode language
+            lang = processor.encode_language(batch["language_instruction"])
+            batch.pop("language_instruction", None)
+            inputs = {**batch, **lang}
+            inputs = {k: v.cuda(non_blocking=True) for k, v in inputs.items()}
+            
+            # Update LR
+            update_group_lrs(optim, global_step, args)
 
-        # Forward
-        loss_dict: Dict[str, torch.Tensor] = model(**inputs)
-        loss = sum(loss_dict.values())
-        
-        # Backward
-        accelerator.backward(loss)
-        if args.max_grad_norm:
-            accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-        optim.step()
-        optim.zero_grad()
+            # Forward
+            loss_dict: Dict[str, torch.Tensor] = model(**inputs)
+            loss = sum(loss_dict.values())
+            
+            # Backward
+            accelerator.backward(loss)
+            if accelerator.sync_gradients and args.max_grad_norm:
+                accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            optim.step()
+            optim.zero_grad()
 
-        # Logging
-        if global_step % args.log_interval == 0:
-            logs = {k: v.detach().float().item() for k, v in loss_dict.items()}
-            logs["loss_total"] = float(loss.detach().item())
-            logs.update({f"lr_{g['name']}": g["lr"] for g in optim.param_groups})
-            accelerator.log(logs, step=global_step)
+        # 실제 그래디언트 업데이트(Accumulation 완료)가 발생했을 때만 로그 출력 및 스텝 증가
+        if accelerator.sync_gradients:
+            # Logging
+            if global_step % args.log_interval == 0:
+                logs = {k: v.detach().float().item() for k, v in loss_dict.items()}
+                logs["loss_total"] = float(loss.detach().item())
+                logs.update({f"lr_{g['name']}": g["lr"] for g in optim.param_groups})
+                accelerator.log(logs, step=global_step)
 
+                if accelerator.is_main_process:
+                    dt = (time.time() - t0) / args.log_interval
+                    t0 = time.time()
+                    logger.info(
+                        f"[{global_step}/{args.iters}] "
+                        f"loss={logs['loss_total']:.4f} "
+                        f"lr_core={logs['lr_transformer_core']:.2e} "
+                        f"lr_action={logs['lr_action_heads']:.2e} "
+                        f"lr_vlm={logs['lr_vlm']:.2e} ({dt:.2f}s/it)"
+                    )
+            
+            # Checkpointing
+            global_step += 1
             if accelerator.is_main_process:
-                dt = (time.time() - t0) / args.log_interval
-                t0 = time.time()
-                logger.info(
-                    f"[{global_step}/{args.iters}] "
-                    f"loss={logs['loss_total']:.4f} "
-                    f"lr_core={logs['lr_transformer_core']:.2e} "
-                    f"lr_action={logs['lr_action_heads']:.2e} "
-                    f"lr_vlm={logs['lr_vlm']:.2e} ({dt:.2f}s/it)"
-                )
-        
-        # Checkpointing
-        global_step += 1
-        if accelerator.is_main_process:
-            if global_step == args.iters or global_step % args.save_interval == 0:
-                save_dir = os.path.join(output_dir, f"ckpt-{global_step}")
-                accelerator.print(f"💾 Saving model to {save_dir}")
-                accelerator.unwrap_model(model).save_pretrained(save_dir, safe_serialization=True)
-                with open(os.path.join(save_dir, "state.json"), "w") as f:
-                    json.dump({"global_step": global_step}, f)
-                    
-        if global_step >= args.iters:
-            break
+                if global_step == args.iters or global_step % args.save_interval == 0:
+                    save_dir = os.path.join(output_dir, f"ckpt-{global_step}")
+                    accelerator.print(f"💾 Saving model to {save_dir}")
+                    accelerator.unwrap_model(model).save_pretrained(save_dir, safe_serialization=True)
+                    with open(os.path.join(save_dir, "state.json"), "w") as f:
+                        json.dump({"global_step": global_step}, f)
+                        
+            if global_step >= args.iters:
+                break
 
     accelerator.end_training()
 

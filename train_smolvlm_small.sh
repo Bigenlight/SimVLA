@@ -12,7 +12,7 @@ set -e
 # Command line arguments (with defaults)
 # =============================================================================
 
-BATCH_SIZE=${1:-64}
+BATCH_SIZE=${1:-1}
 LEARNING_COEF=${2:-0.1}
 OUTPUT_DIR=${3:-./runs/simvla_libero_small}
 RESUME_CKPT=${4:-""}
@@ -24,7 +24,7 @@ echo "   output_dir: $OUTPUT_DIR"
 echo "   resume_ckpt: ${RESUME_CKPT:-'None (training from scratch)'}"
 
 # GPU configuration
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0
 
 # Suppress TensorFlow logs
 export TF_CPP_MIN_LOG_LEVEL=2
@@ -44,10 +44,10 @@ SMOLVLM_MODEL="HuggingFaceTB/SmolVLM-500M-Instruct"
 # =============================================================================
 LEARNING_RATE=1e-4
 NUM_ACTIONS=10          # Action horizon
-ITERS=200000
+ITERS=50000
 WARMUP_STEPS=0
 FREEZE_STEPS=1000
-SAVE_INTERVAL=10000
+SAVE_INTERVAL=5000   # 5000 스텝마다 모델 저장
 LOG_INTERVAL=20
 NUM_WORKERS=4
 MAX_GRAD_NORM=1.0
@@ -88,6 +88,7 @@ ARGS="--output_dir ${OUTPUT_DIR} \
     --smolvlm_model_path ${SMOLVLM_MODEL} \
     --action_mode libero_joint \
     --batch_size ${BATCH_SIZE} \
+    --gradient_accumulation_steps 8 \
     --learning_rate ${LEARNING_RATE} \
     --learning_coef ${LEARNING_COEF} \
     --num_actions ${NUM_ACTIONS} \
@@ -143,7 +144,7 @@ echo "============================================================"
 # Multi-GPU training
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 accelerate launch \
-    --num_processes=4 \
+    --num_processes=1 \
     --main_process_port 29504 \
     --mixed_precision bf16 \
     train_smolvlm.py ${ARGS}
