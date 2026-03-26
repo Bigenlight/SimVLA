@@ -8,7 +8,7 @@ A simple and efficient Vision-Language-Action (VLA) model for robot manipulation
 
 <img width="506" height="796" alt="image" src="https://github.com/user-attachments/assets/7ffb8969-aa4f-4bcc-8c38-33d5e7da4b25" />
 
-# 결론: 3060GB만으로는 트레이닝이 어려움. (매우 오래 걸리고 배치 사이즈를 낮춰야하기에 성공률을 장담하지 못함.)
+# 결론: RTX3060(10GB) 만으로는 트레이닝이 어려움. (매우 오래 걸리고 배치 사이즈를 낮춰야하기에 성공률을 장담하지 못함.)
 
 # 🚀 SimVLA + LIBERO 완전 정복 가이드 (Ubuntu 24.04 / 12GB VRAM 기준)
 
