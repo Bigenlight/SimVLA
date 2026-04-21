@@ -10,9 +10,169 @@ A simple and efficient Vision-Language-Action (VLA) model for robot manipulation
 
 # 결론: RTX3060(12GB) 만으로는 트레이닝이 어려움. (매우 오래 걸리고 배치 사이즈를 낮춰야하기에 성공률을 장담하지 못함.)
 
-# 🚀 SimVLA + LIBERO 완전 정복 가이드 (Ubuntu 24.04 / 12GB VRAM 기준)
+---
+
+# 🐳 Docker 기반 세팅 (bigenlight 서버 기준, unified VLA protocol)
+
+> 이 섹션은 아래의 conda 기반 "완전 정복 가이드"와는 별도의 흐름이다.
+> 기존 가이드는 **conda 2-env (simvla + libero) + WebSocket+msgpack** 경로고,
+> 이 섹션은 **Docker 2-컨테이너 + FastAPI HTTP (unified VLA protocol)** 경로다.
+> 하나를 고르면 된다 — Pi0.5 / OpenVLA / X-VLA 등 다른 VLA 모델을 이미 돌리고 있고 동일한 벤치마크(Libero-pro)로 공정 비교하고 싶을 때 이 쪽을 쓴다.
+
+## 1. 아키텍처
+
+```
+┌───────────────────────────────┐        ┌─────────────────────────────┐
+│  simvla-http  (GPU)           │        │  libero-pro  (GPU)          │
+│  FastAPI :8700                │  HTTP  │  robosuite / MuJoCo render  │
+│  /health /reset /act          │◀──────▶│  scripts/libero_vla_eval.py │
+│  - SmolVLM + action tf        │        │  - 에피소드 loop            │
+│  - 180° rotate + 224 resize   │        │  - action chunk 소진        │
+└───────────────────────────────┘        └─────────────────────────────┘
+              ▲                                         ▲
+              │ bind mount                              │ bind mount
+              │   /app    ← SimVLA (이 리포)            │   /workspace/LIBERO-PRO
+              │   /checkpoint ← ./SimVLA-LIBERO (3GB)   │   /workspace/LIBERO
+              │   /hf_cache ← ~/.cache/huggingface      │   ood_data, test_outputs
+```
+
+컨테이너 한 개 = VLA 모델 한 개, 컨테이너 한 개 = 벤치마크 한 개.
+컨테이너는 `--network host` 로 띄워서 `localhost:8700` 으로 통신한다.
+포트 관례: **OpenVLA 8600 / Pi0.5 8400 / SimVLA 8700**.
+
+통신 규약은 `VLA_COMMUNICATION_PROTOCOL.md` (이 워크스페이스 루트) — `observation.images.{static,wrist}` (base64 PNG HWC uint8) + `observation.state.*` + `task` → `action.eef_pos / action.eef_euler / action.gripper` (`[10, D]` chunk, `action_type="relative"`).
+
+## 2. Pre-requisites (호스트)
+
+```bash
+# 1) SimVLA 소스 (= 이 리포)
+cd ~/workspace          # 또는 원하는 루트
+git clone <이 리포 URL> SimVLA
+
+# 2) 체크포인트 (~3 GB, LFS) — SimVLA 리포 안에 둔다
+cd SimVLA
+git clone https://huggingface.co/YuankaiLuo/SimVLA-LIBERO SimVLA-LIBERO
+# LFS 파일이 자동으로 materialize 안되면:  cd SimVLA-LIBERO && git lfs checkout
+cd ..
+
+# 3) LIBERO / LIBERO-PRO 소스 (벤치마크 컨테이너가 bind mount 함)
+cd ~/workspace/Libero-pro_benchmark       # 이 레포는 별도 clone
+git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git LIBERO
+git clone https://github.com/Zxy-MLlab/LIBERO-PRO.git LIBERO-PRO
+```
+
+호스트에 Docker + NVIDIA Container Toolkit + GPU 드라이버 ≥ 550 (CUDA 12.4) 필요. 본 세팅은 **RTX A6000 × 4 (48GB each)** 에서 검증됐다 (SimVLA 서버 단독 ~3.4 GB VRAM).
+
+## 3. 이미지 빌드 or 풀
+
+**Docker Hub 에서 풀** (권장, 빌드 12GB/~15분 생략):
+```bash
+docker pull bigenlight/simvla-http:latest
+```
+
+**로컬 빌드** (수정 반영이 필요할 때):
+```bash
+cd ~/workspace/SimVLA
+docker build -t bigenlight/simvla-http:latest \
+    -f scripts/docker/serve_simvla_http.Dockerfile .
+```
+초기 빌드 시 flash-attn CUDA 커널 컴파일이 ~10분, 총 ~15분 소요. 이후 rebuild는 캐시 덕에 30초대.
+
+이미지 구성: CUDA 12.4.1-cudnn-devel-ubuntu22.04 + Python 3.10 + torch 2.5.1+cu124 + transformers 4.57.3 + peft 0.17.1 + flash-attn 2.5.6 + FastAPI/uvicorn. 소스는 이미지에 굽지 않고 **`/app` 에 bind mount** 하므로 SimVLA 쪽 코드 수정은 재빌드 없이 즉시 반영된다.
+
+## 4. 서버 띄우기
+
+```bash
+cd ~/workspace/SimVLA
+
+docker run -d --name simvla-http --network host \
+    --gpus '"device=0"' \
+    -v "$(pwd):/app" \
+    -v "$(pwd)/SimVLA-LIBERO:/checkpoint:ro" \
+    -v "$HOME/.cache/huggingface:/hf_cache" \
+    -e HF_HOME=/hf_cache \
+    bigenlight/simvla-http:latest
+```
+
+또는 docker compose:
+```bash
+docker compose -f scripts/docker/simvla_http_compose.yml up -d
+```
+
+첫 기동 시 SmolVLM-500M base weights (~1GB) 가 `~/.cache/huggingface` 로 다운로드되고 이후 재기동은 즉시. 서버 ready 확인:
+```bash
+curl -s http://localhost:8700/health
+# => {"status":"ok","model":"simvla","action_type":"relative",
+#     "action_keys":["action.eef_pos","action.eef_euler","action.gripper"],
+#     "n_action_steps":10}
+```
+
+**--dummy 스모크 테스트** (체크포인트 없이 프로토콜 배선만 검증):
+```bash
+docker run --rm --network host -v $(pwd):/app \
+    -e SIMVLA_HTTP_ARGS="--dummy" bigenlight/simvla-http:latest
+curl -s http://localhost:8700/health   # model = "simvla_dummy"
+```
+
+## 5. LIBERO Evaluation (libero-pro 컨테이너에서)
+
+`Libero-pro_benchmark` 리포의 `run.sh` 가 `bigenlight/libero-pro:latest` 를 띄우고 `scripts/libero_vla_eval.py` 를 실행한다. 별도 SimVLA 쪽 코드 변경 불필요.
+
+```bash
+cd ~/workspace/Libero-pro_benchmark
+
+# 1 task × 1 trial 스모크 테스트 (약 1분)
+./run.sh --vla-eval libero_spatial \
+    --vla-url http://localhost:8700 \
+    --vla-num-tasks 1 --vla-num-trials 1
+
+# full libero_spatial (10 task × 10 trial) — A6000 기준 ~30분
+./run.sh --vla-eval libero_spatial \
+    --vla-url http://localhost:8700 \
+    --vla-num-tasks 10 --vla-num-trials 10
+```
+
+결과: `test_outputs/eval/libero_spatial_<timestamp>/summary.json` + `videos/*.mp4`.
+
+### 검증 결과 (2026-04-21, RTX A6000)
+- `libero_spatial` task 0 ("Pick the akita black bowl ...") 1 trial → **성공 (73 step)**, 평균 latency 191ms/call
+- `/health` `/act` 응답 shape: `action.eef_pos (10,3)` / `action.eef_euler (10,3)` / `action.gripper (10,1)` — 프로토콜 준수
+- 서버 단독 VRAM 사용량: ~3.4 GB
+
+## 6. 프로토콜 매핑 요약 (디버깅용)
+
+native SimVLA (WebSocket+msgpack, `evaluation/libero/serve_smolvlm_libero.py`) 와 이 FastAPI 서버의 매핑:
+
+| 차원 | native (SimVLA 원본) | Docker HTTP (이 리포 `scripts/serve_simvla_http.py`) |
+|---|---|---|
+| Transport | WebSocket + msgpack_numpy | FastAPI + JSON |
+| 포트 | 8102 (예) | **8700** |
+| 이미지 수신 | 224×224 uint8 HWC (클라이언트가 이미 180° 회전 + resize_with_pad) | 256×256 raw (서버가 180° 회전 + 224 resize 수행) |
+| state | `observation/state` 8D array | `observation.state.{eef_pos,eef_quat,gripper_qpos}` → 내부에서 8D 조립 (`eef_quat` → axis-angle 변환) |
+| language | `prompt` | `task` |
+| action | `{"actions": [10,7]}` | `action.eef_pos[10,3]` + `action.eef_euler[10,3]` (axis-angle이 euler 슬롯) + `action.gripper[10,1]` |
+| chunk 재구성 | client가 `[10,7]` 그대로 popleft | Libero-pro 쪽 `_assemble_action_from_subkeys` 가 `[pos,rot,grip]` concat → 7D OSC_POSE |
+
+전처리/상태 조립 코드는 전부 서버 안에 들어있으므로 벤치마크 쪽은 SimVLA 를 전혀 모른 채 동작한다.
+
+## 7. 파일 레퍼런스
+
+```
+scripts/
+├── serve_simvla_http.py                    # FastAPI 서버
+└── docker/
+    ├── serve_simvla_http.Dockerfile        # 이미지 빌드
+    ├── simvla_http_compose.yml             # compose 헬퍼
+    └── simvla_http_entrypoint.sh           # 컨테이너 런타임
+```
+
+---
+
+# 🚀 SimVLA + LIBERO 완전 정복 가이드 (Ubuntu 24.04 / 12GB VRAM 기준) — conda 기반 원본 워크플로우
 
 본 가이드는 단일 소비자용 GPU(예: RTX 3060 12GB) 환경에서 SimVLA 모델을 세팅하고, 평가(Evaluation) 및 훈련(Training)까지 진행하기 위한 최적화된 워크플로우를 담고 있습니다.
+
+> **참고**: 위의 Docker 섹션과 이 conda 섹션은 **병렬 경로**입니다. 훈련(Training)은 이 conda 가이드를 따라가세요 — Docker 이미지는 inference 전용입니다.
 
 
 ## 1. 소스 코드 및 모델 체크포인트 다운로드
@@ -23,10 +183,11 @@ A simple and efficient Vision-Language-Action (VLA) model for robot manipulation
 cd ~
 
 # 1. SimVLA 공식 코드 클론 (본인의 Fork 저장소가 있다면 해당 주소 사용)
-git clone [https://github.com/LUOyk1999/SimVLA.git](https://github.com/LUOyk1999/SimVLA.git)
+git clone https://github.com/LUOyk1999/SimVLA.git
 
-# 2. 허깅페이스 사전 학습 모델 다운로드 (Git LFS 필요)
-git clone [https://huggingface.co/YuankaiLuo/SimVLA-LIBERO](https://huggingface.co/YuankaiLuo/SimVLA-LIBERO) ~/SimVLA-LIBERO
+# 2. 허깅페이스 사전 학습 모델 다운로드 (Git LFS 필요) — SimVLA 리포 안에 둔다
+cd SimVLA
+git clone https://huggingface.co/YuankaiLuo/SimVLA-LIBERO SimVLA-LIBERO
 ```
 
 ## 2. 가상환경 세팅
@@ -101,7 +262,7 @@ conda activate simvla
 cd ~/SimVLA
 
 CUDA_VISIBLE_DEVICES=0 python evaluation/libero/serve_smolvlm_libero.py \
-    --checkpoint ~/SimVLA-LIBERO \
+    --checkpoint ./SimVLA-LIBERO \
     --norm_stats ./norm_stats/libero_norm.json \
     --port 8102
 ```

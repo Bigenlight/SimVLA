@@ -1,0 +1,56 @@
+# Standalone compose for the SimVLA HTTP VLA server.
+#
+# Usage (from the SimVLA repo root):
+#
+#   # Protocol smoke-test — no real checkpoint required (server returns dummy
+#   # zero-actions; validates the HTTP wiring end-to-end):
+#   SIMVLA_HTTP_ARGS="--dummy" \
+#     docker compose -f scripts/docker/simvla_http_compose.yml up --build
+#
+#   # Real checkpoint: expects ./SimVLA-LIBERO (in the SimVLA repo root) to exist.
+#   # (Prerequisite — one-time on the host, ~3 GB, from repo root:
+#   #    git lfs clone https://huggingface.co/YuankaiLuo/SimVLA-LIBERO SimVLA-LIBERO
+#   # ) SmolVLM base weights are pulled to ~/.cache/huggingface on first run
+#   # (~1 GB) and cached across restarts via the /hf_cache mount.
+#   docker compose -f scripts/docker/simvla_http_compose.yml up --build
+#
+#   # Custom checkpoint path or server args:
+#   SIMVLA_CHECKPOINT=/path/to/ckpt SIMVLA_HTTP_ARGS="--attn-impl sdpa" \
+#     docker compose -f scripts/docker/simvla_http_compose.yml up
+#
+# The server listens on host port 8700 (network_mode: host) so that any other
+# container on the same machine can reach it at http://localhost:8700.
+# (openvla=8600, pi0.5=8400, simvla=8700.)
+
+services:
+  simvla_http:
+    image: bigenlight/simvla-http:latest
+    build:
+      context: ../..
+      dockerfile: scripts/docker/serve_simvla_http.Dockerfile
+    init: true
+    tty: true
+    network_mode: host
+    # Source code is bind-mounted so the host's SimVLA repo stays the source of
+    # truth (enables `git pull/push` without rebuilding the image). The SimVLA-
+    # LIBERO checkpoint mount is read-only; the HF cache mount makes the
+    # SmolVLM base download a one-time cost across container restarts.
+    volumes:
+      - ../..:/app
+      # Default: ./SimVLA-LIBERO inside the SimVLA repo. Override with
+      # SIMVLA_CHECKPOINT=/abs/path if the checkpoint lives elsewhere.
+      - ${SIMVLA_CHECKPOINT:-../../SimVLA-LIBERO}:/checkpoint:ro
+      - ${HF_HOME:-${HOME}/.cache/huggingface}:/hf_cache
+    environment:
+      - SIMVLA_HTTP_ARGS=${SIMVLA_HTTP_ARGS:-}
+      - SIMVLA_HTTP_PORT=${SIMVLA_HTTP_PORT:-8700}
+      - HF_HOME=/hf_cache
+      - TRANSFORMERS_CACHE=/hf_cache
+      - IS_DOCKER=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

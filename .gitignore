@@ -1,0 +1,18 @@
+# Large binary checkpoints — kept local, not tracked in this repo.
+# Download from HuggingFace (see readme.md Docker section):
+#   git clone https://huggingface.co/YuankaiLuo/SimVLA-LIBERO SimVLA-LIBERO
+/SimVLA-LIBERO/
+
+# Bytecode + venv
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Eval outputs
+eval_*/
+runs/
+
+# HF cache if someone copies it into the tree by accident
+.cache/
