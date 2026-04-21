@@ -205,6 +205,13 @@ CUDA_VISIBLE_DEVICES=0 python evaluation/libero/libero_client.py \
 
 *완료 후 ./eval_my_simvla 폴더에서 로봇의 실제 조작 영상(.mp4)을 확인가능.*
 
+## Model Architecture
+
+- **Vision-Language Backbone**: SmolVLM-500M-Instruct (576 hidden dim)
+- **Action Transformer**: Configurable depth and width
+  - Small: 768 hidden, 12 layers, 12 heads
+  - Large: 1024 hidden, 24 layers, 16 heads
+  
 ## Reference
 
 If you find our codes useful, please consider citing our work
