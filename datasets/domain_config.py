@@ -8,6 +8,9 @@ DATA_WEIGHTS = {
     "libero_goal": 1.0,
     "libero_object": 1.0,
     "libero_spatial": 1.0,
+    # LIBERO-Plus task-specific subsets (this fork)
+    "libero_plus_taskA": 1.0,
+    "libero_plus_taskB": 1.0,
 }
 
 DATA_DOMAIN_ID = {
@@ -19,4 +22,7 @@ DATA_DOMAIN_ID = {
     "libero_goal": 0,
     "libero_object": 0,
     "libero_spatial": 0,
+    # LIBERO-Plus share the same domain id as LIBERO (same obs/action space)
+    "libero_plus_taskA": 0,
+    "libero_plus_taskB": 0,
 }

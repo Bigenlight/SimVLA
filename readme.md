@@ -18,6 +18,8 @@ A simple and efficient Vision-Language-Action (VLA) model for robot manipulation
 > 기존 가이드는 **conda 2-env (simvla + libero) + WebSocket+msgpack** 경로고,
 > 이 섹션은 **Docker 2-컨테이너 + FastAPI HTTP (unified VLA protocol)** 경로다.
 > 하나를 고르면 된다 — Pi0.5 / OpenVLA / X-VLA 등 다른 VLA 모델을 이미 돌리고 있고 동일한 벤치마크(Libero-pro)로 공정 비교하고 싶을 때 이 쪽을 쓴다.
+>
+> **👉 Docker 기반 학습(fine-tune) + LIBERO-Plus Task A/B eval 상세 가이드는 [`TRAINING.md`](TRAINING.md) 참조.** 데이터 변환 파이프라인, 학습 컨테이너 구성, 민감 하이퍼파라미터, 실측 결과(3000 iter / 31분 / Task B 3/3 성공) 까지 포함.
 
 ## 1. 아키텍처
 
